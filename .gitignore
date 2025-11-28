@@ -1,0 +1,36 @@
+# Flutter/Dart
+.dart_tool/
+.packages
+build/
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# Android
+android/.gradle/
+android/local.properties
+
+# iOS/macOS
+ios/Pods/
+macos/Pods/
+**/Flutter/ephemeral/
+
+# Windows build outputs
+windows/runner/Debug/
+windows/runner/Release/
+
+# Web tooling caches
+web/.dart_tool/
+
+# Logs
+*.log
+
+# Node (for web hosting helpers)
+**/node_modules/
+
+# Firebase emulators local state
+firebase-debug.log
+firebase-debug.*.log
+*.cache
