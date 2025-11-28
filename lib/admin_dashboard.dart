@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_admin_scaffold/admin_scaffold.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -157,10 +156,34 @@ class _AdminDashboardState extends State<AdminDashboard> {
             Expanded(child: TextField(controller: _prodCategoriaController, decoration: const InputDecoration(labelText: 'Categoría'))),
           ]),
           const SizedBox(height: 12),
-          Row(children: [
+          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Expanded(child: TextField(controller: _prodDescripcionController, decoration: const InputDecoration(labelText: 'Descripción'))),
             const SizedBox(width: 16),
-            Expanded(child: TextField(controller: _prodImagenController, decoration: const InputDecoration(labelText: 'URL Imagen'))),
+            Expanded(
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _prodImagenController,
+                    decoration: const InputDecoration(labelText: 'URL Imagen'),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    height: 120,
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: (_prodImagenController.text.trim().isNotEmpty)
+                          ? Image.network(_prodImagenController.text.trim(), fit: BoxFit.cover, errorBuilder: (c, e, s) => const Center(child: Icon(Icons.broken_image, color: Colors.white)))
+                          : const Center(child: Icon(Icons.image, color: Colors.white)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(width: 16),
             Row(children: [
               const Text('Disponible'),
@@ -227,7 +250,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
               rows: docs.map((doc) {
                 final data = doc.data() as Map<String, dynamic>;
                 return DataRow(cells: [
-                  DataCell(Text((data['userId'] ?? '').toString())),
+                  DataCell(FutureBuilder<DocumentSnapshot>(
+                    future: FirebaseFirestore.instance.collection('Usuarios').doc((data['userId'] ?? '').toString()).get(),
+                    builder: (context, snap) {
+                      final name = (snap.data?.data() as Map<String, dynamic>?)?['nombre']?.toString();
+                      final email = (data['userEmail'] ?? '').toString();
+                      final userId = (data['userId'] ?? '').toString();
+                      return Text(name?.isNotEmpty == true ? name! : (email.isNotEmpty ? email : userId));
+                    },
+                  )),
                   DataCell(Text('S/ ${(data['total'] ?? 0).toString()}')),
                   DataCell(Text((data['estado'] ?? '').toString())),
                   DataCell(Row(children: [
@@ -242,62 +273,97 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
+  DateTime? _filterDate;
+  String? _filterHour;
+
   Widget _buildReservas() {
     return Padding(
       padding: const EdgeInsets.all(24),
-      child: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('Reservas').snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final docs = snapshot.data!.docs;
-          return SingleChildScrollView(
-            child: DataTable(
-              columns: const [
-                DataColumn(label: Text('Cliente')),
-                DataColumn(label: Text('Mesa')),
-                DataColumn(label: Text('Fecha/Hora')),
-                DataColumn(label: Text('Personas')),
-                DataColumn(label: Text('Acciones')),
-              ],
-              rows: docs.map((doc) {
-                final data = doc.data() as Map<String, dynamic>;
-                final cant = (data['cantidad_personas'] ?? 0).toString();
-                final nombre = (data['nombre_cliente'] ?? '').toString();
-                final mesa = (data['mesa_nombre'] ?? '').toString();
-                final ts = data['fecha_hora'];
-                final fechaTexto = ts is Timestamp ? ts.toDate().toString() : ts?.toString() ?? '';
-                return DataRow(cells: [
-                  DataCell(Text(nombre)),
-                  DataCell(Text(mesa)),
-                  DataCell(Text(fechaTexto)),
-                  DataCell(Text(cant)),
-                  DataCell(Row(children: [
-                    IconButton(icon: const Icon(Icons.edit, color: Colors.blue), onPressed: () async {
-                      final controller = TextEditingController(text: cant);
-                      final result = await showDialog<String>(
-                        context: context,
-                        builder: (ctx) => AlertDialog(
-                          title: const Text('Editar personas'),
-                          content: TextField(controller: controller, keyboardType: TextInputType.number),
-                          actions: [
-                            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-                            TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text('Guardar')),
-                          ],
-                        ),
-                      );
-                      if (result != null) {
-                        final n = int.tryParse(result) ?? int.parse(cant);
-                        await _actualizarReserva(doc.id, {'cantidad_personas': n});
-                      }
-                    }),
-                    IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _eliminarReserva(doc.id)),
-                  ])),
-                ]);
-              }).toList(),
+      child: Column(children: [
+        Row(children: [
+          Expanded(
+            child: InputDatePickerFormField(
+              firstDate: DateTime(2020),
+              lastDate: DateTime(2100),
+              fieldLabelText: 'Filtrar por fecha',
+              onDateSubmitted: (d) => setState(() => _filterDate = d),
+              onDateSaved: (d) => setState(() => _filterDate = d),
             ),
-          );
-        },
-      ),
+          ),
+          const SizedBox(width: 16),
+          DropdownButton<String>(
+            value: _filterHour,
+            hint: const Text('Hora'),
+            items: List.generate(11, (i) => 12 + i)
+                .map((h) => DropdownMenuItem(value: '${h.toString().padLeft(2, '0')}:00', child: Text('${h.toString().padLeft(2, '0')}:00')))
+                .toList(),
+            onChanged: (v) => setState(() => _filterHour = v),
+          ),
+        ]),
+        const SizedBox(height: 16),
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('Reservas').snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+              final docs = snapshot.data!.docs;
+              return SingleChildScrollView(
+                child: DataTable(
+                  columns: const [
+                    DataColumn(label: Text('Cliente')),
+                    DataColumn(label: Text('Mesa')),
+                    DataColumn(label: Text('Fecha/Hora')),
+                    DataColumn(label: Text('Personas')),
+                    DataColumn(label: Text('Acciones')),
+                  ],
+                  rows: docs.where((doc) {
+                    final data = doc.data() as Map<String, dynamic>;
+                    final ts = data['fecha_hora'];
+                    final dt = ts is Timestamp ? ts.toDate() : null;
+                    final matchesDate = _filterDate == null || (dt != null && dt.year == _filterDate!.year && dt.month == _filterDate!.month && dt.day == _filterDate!.day);
+                    final matchesHour = _filterHour == null || (dt != null && '${dt.hour.toString().padLeft(2, '0')}:00' == _filterHour);
+                    return matchesDate && matchesHour;
+                  }).map((doc) {
+                    final data = doc.data() as Map<String, dynamic>;
+                    final cant = (data['cantidad_personas'] ?? 0).toString();
+                    final nombre = (data['nombre_cliente'] ?? '').toString();
+                    final mesa = (data['mesa_nombre'] ?? '').toString();
+                    final ts = data['fecha_hora'];
+                    final fechaTexto = ts is Timestamp ? ts.toDate().toString() : ts?.toString() ?? '';
+                    return DataRow(cells: [
+                      DataCell(Text(nombre)),
+                      DataCell(Text(mesa)),
+                      DataCell(Text(fechaTexto)),
+                      DataCell(Text(cant)),
+                      DataCell(Row(children: [
+                        IconButton(icon: const Icon(Icons.edit, color: Colors.blue), onPressed: () async {
+                          final controller = TextEditingController(text: cant);
+                          final result = await showDialog<String>(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text('Editar personas'),
+                              content: TextField(controller: controller, keyboardType: TextInputType.number),
+                              actions: [
+                                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
+                                TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text('Guardar')),
+                              ],
+                            ),
+                          );
+                          if (result != null) {
+                            final n = int.tryParse(result) ?? int.parse(cant);
+                            await _actualizarReserva(doc.id, {'cantidad_personas': n});
+                          }
+                        }),
+                        IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _eliminarReserva(doc.id)),
+                      ])),
+                    ]);
+                  }).toList(),
+                ),
+              );
+            },
+          ),
+        ),
+      ]),
     );
   }
 
@@ -368,7 +434,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   @override
   Widget build(BuildContext context) {
     return AdminScaffold(
-      appBar: AppBar(title: const Text('Panel de Administración'), backgroundColor: kIsWeb ? Colors.blue : Colors.deepOrange,),
+      appBar: AppBar(title: const Text('Panel de Administración'), backgroundColor: const Color(0xFF0E0502), foregroundColor: const Color(0xFFFAFAFA)),
       sideBar: SideBar(
         items: const [
           AdminMenuItem(title: 'Productos', icon: Icons.restaurant, route: '/productos'),
