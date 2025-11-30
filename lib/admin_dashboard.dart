@@ -1,6 +1,8 @@
 import 'package:flutter_admin_scaffold/admin_scaffold.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'dart:async';
+import 'dart:math' as math;
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -40,28 +42,41 @@ class _AdminDashboardState extends State<AdminDashboard> {
   String? _filterHour;
 
   // Filtros para pedidos
-  String? _pedidosEstado;
+  String? _pedidosEstado = 'todos';
   String _pedidosUserFilter = '';
   bool _pedidosFechaAsc = true;
 
   // Estados locales
-  List<QueryDocumentSnapshot> _productosDocs = [];
 
   // Colores de la aplicación
   final Color _colorNegro = const Color(0xFF0E0502);
   final Color _colorBlanco = const Color(0xFFFAFAFA);
   final Color _colorCrema = const Color(0xFFFAE8C9);
   final Color _colorRojo = const Color(0xFFE62617);
+  
+  Color _badgeBgColor(String estado) {
+    final e = estado.toLowerCase();
+    if (e == 'entregado') return Colors.green;
+    if (e == 'cancelado') return Colors.red.shade100;
+    if (e == 'pendiente') return Colors.orange;
+    return _colorCrema;
+  }
+  
+  Color _badgeTextColor(String estado) {
+    final e = estado.toLowerCase();
+    if (e == 'entregado') return _colorBlanco;
+    if (e == 'cancelado') return Colors.red.shade800;
+    if (e == 'pendiente') return _colorBlanco;
+    return _colorNegro;
+  }
 
   @override
   void initState() {
     super.initState();
-    _cargarProductos();
   }
 
   @override
   void dispose() {
-    // Limpiar todos los controladores
     _prodNombreController.dispose();
     _prodPrecioController.dispose();
     _prodDescripcionController.dispose();
@@ -76,24 +91,25 @@ class _AdminDashboardState extends State<AdminDashboard> {
     super.dispose();
   }
 
-  // CORRECCIÓN: Métodos para cargar datos de Firebase usando StreamBuilder
-  Future<void> _cargarProductos() async {
-    try {
-      final snapshot = await FirebaseFirestore.instance
-          .collection('Menu')
-          .get();
+  
 
-      if (mounted) {
-        setState(() {
-          _productosDocs = snapshot.docs;
-        });
-      }
-    } catch (e) {
-      debugPrint('Error cargando productos: $e');
-      if (mounted) {
-        setState(() {});
+  Future<Map<String, Map<String, dynamic>>> _fetchUsuariosPorIds(Set<String> ids) async {
+    if (ids.isEmpty) return {};
+    final firestore = FirebaseFirestore.instance;
+    final allIds = ids.toList();
+    final Map<String, Map<String, dynamic>> result = {};
+    const chunkSize = 10;
+    for (var i = 0; i < allIds.length; i += chunkSize) {
+      final chunk = allIds.sublist(i, math.min(i + chunkSize, allIds.length));
+      final snap = await firestore
+          .collection('Usuarios')
+          .where(FieldPath.documentId, whereIn: chunk)
+          .get();
+      for (final d in snap.docs) {
+        result[d.id] = d.data();
       }
     }
+    return result;
   }
 
   void _guardarProducto() async {
@@ -129,7 +145,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       }
       
       _limpiarFormularioProducto();
-      await _cargarProductos(); // Recargar datos después de guardar
+      setState(() {});
     } catch (e) {
       _mostrarSnackBar('Error al guardar el producto: $e');
     }
@@ -163,7 +179,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       try {
         await FirebaseFirestore.instance.collection('Menu').doc(id).delete();
         _mostrarSnackBar('Producto eliminado exitosamente');
-        await _cargarProductos(); // Recargar datos después de eliminar
+        setState(() {});
       } catch (e) {
         _mostrarSnackBar('Error al eliminar el producto: $e');
       }
@@ -203,7 +219,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
       }
       
       _limpiarFormularioLocal();
-      // StreamBuilder recargará automáticamente los datos
     } catch (e) {
       _mostrarSnackBar('Error al guardar el local: $e');
     }
@@ -243,7 +258,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
       try {
         await FirebaseFirestore.instance.collection('Locales').doc(id).delete();
         _mostrarSnackBar('Local eliminado exitosamente');
-        // StreamBuilder recargará automáticamente los datos
       } catch (e) {
         _mostrarSnackBar('Error al eliminar el local: $e');
       }
@@ -323,11 +337,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  // Aplicar orden de disponibilidad a una lista de productos
   List<QueryDocumentSnapshot> _aplicarOrdenDisponibilidad(List<QueryDocumentSnapshot> productos) {
     productos = List<QueryDocumentSnapshot>.from(productos);
     
-    // Aplicar filtro de disponibilidad
     if (_prodOrdenDisponibilidad == 'Disponibles primero') {
       productos.sort((a, b) {
         final dataA = a.data() as Map<String, dynamic>;
@@ -382,7 +394,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
           const SizedBox(height: 24),
           
-          // Filtros y ordenamiento
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -428,7 +439,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           
           const SizedBox(height: 12),
           
-          // Formulario de productos
           Card(
             elevation: 4,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -664,7 +674,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
           const SizedBox(height: 24),
           
-          // Productos en tiempo real
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance.collection('Menu').snapshots(),
@@ -696,62 +705,91 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Widget _buildListaProductos(List<QueryDocumentSnapshot> productos) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.vertical,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: DataTable(
-          columnSpacing: 20,
-          columns: [
-            DataColumn(label: Text('Nombre', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-            DataColumn(label: Text('Precio', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-            DataColumn(label: Text('Categoría', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-            DataColumn(label: Text('Disponible', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-            DataColumn(label: Text('Acciones', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-          ],
-          rows: productos.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            return DataRow(
-              cells: [
-                DataCell(SelectableText(
-                  (data['nombre'] ?? '').toString(),
-                  style: TextStyle(color: _colorNegro),
-                )),
-                DataCell(SelectableText(
-                  'S/ ${(data['precio'] ?? 0).toStringAsFixed(2)}',
-                  style: TextStyle(color: _colorNegro),
-                )),
-                DataCell(SelectableText(
-                  (data['categoria'] ?? '').toString(),
-                  style: TextStyle(color: _colorNegro),
-                )),
-                DataCell(
-                  Icon(
-                    (data['disponibilidad'] ?? true) ? Icons.check_circle : Icons.cancel,
-                    color: (data['disponibilidad'] ?? true) ? Colors.green : _colorRojo,
+    return ListView.builder(
+      itemCount: productos.length,
+      itemBuilder: (context, index) {
+        final doc = productos[index];
+        final data = doc.data() as Map<String, dynamic>;
+        final disponible = (data['disponibilidad'] ?? true) == true;
+        return Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: _colorCrema,
+                    borderRadius: BorderRadius.circular(12),
                   ),
+                  child: Icon(disponible ? Icons.restaurant : Icons.remove_circle, color: disponible ? Colors.green : _colorRojo),
                 ),
-                DataCell(
-                  Row(
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      IconButton(
-                        icon: Icon(Icons.edit, color: Colors.blue),
-                        onPressed: () => _editarProducto(data, doc.id),
-                        tooltip: 'Editar',
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            (data['nombre'] ?? '').toString(),
+                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _colorNegro),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: disponible ? Colors.green : _colorRojo,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              disponible ? 'Disponible' : 'No disponible',
+                              style: TextStyle(color: _colorBlanco, fontWeight: FontWeight.bold),
+                              textAlign: TextAlign.center,
+                            ),
+                          ),
+                        ],
                       ),
-                      IconButton(
-                        icon: Icon(Icons.delete, color: _colorRojo),
-                        onPressed: () => _eliminarProducto(doc.id),
-                        tooltip: 'Eliminar',
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Icon(Icons.category, size: 18, color: _colorRojo),
+                          const SizedBox(width: 6),
+                          Text((data['categoria'] ?? '').toString(), style: TextStyle(color: _colorNegro)),
+                          const SizedBox(width: 16),
+                          Icon(Icons.attach_money, size: 18, color: _colorRojo),
+                          const SizedBox(width: 6),
+                          Text('S/ ${(data['precio'] ?? 0).toStringAsFixed(2)}', style: TextStyle(color: _colorNegro, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          ElevatedButton(
+                            onPressed: () => _editarProducto(data, doc.id),
+                            style: ElevatedButton.styleFrom(backgroundColor: _colorRojo, foregroundColor: _colorBlanco),
+                            child: const Text('Editar'),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: () => _eliminarProducto(doc.id),
+                            style: OutlinedButton.styleFrom(foregroundColor: _colorRojo, side: BorderSide(color: _colorRojo)),
+                            child: const Text('Eliminar'),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
               ],
-            );
-          }).toList(),
-        ),
-      ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -770,7 +808,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
           const SizedBox(height: 16),
           
-          // Filtros
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -788,11 +825,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         ),
                         child: DropdownButton<String>(
                           value: _pedidosEstado,
-                          hint: Text('Todos', style: TextStyle(color: _colorNegro)),
                           items: const [
-                            DropdownMenuItem(value: 'pendiente', child: Text('Pendiente')),
-                            DropdownMenuItem(value: 'entregado', child: Text('Entregado')),
-                            DropdownMenuItem(value: 'cancelado', child: Text('Cancelado')),
+                            DropdownMenuItem(value: 'todos', child: Center(child: Text('Todos'))),
+                            DropdownMenuItem(value: 'pendiente', child: Center(child: Text('Pendiente'))),
+                            DropdownMenuItem(value: 'entregado', child: Center(child: Text('Entregado'))),
+                            DropdownMenuItem(value: 'cancelado', child: Center(child: Text('Cancelado'))),
                           ],
                           onChanged: (v) => setState(() => _pedidosEstado = v),
                           dropdownColor: _colorCrema,
@@ -811,7 +848,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         const SizedBox(height: 8),
                         TextField(
                           decoration: InputDecoration(
-                            hintText: 'Nombre/Email/UID',
+                            hintText: 'Nombre/Email/DNI',
                             filled: true,
                             fillColor: _colorCrema,
                             border: OutlineInputBorder(
@@ -882,114 +919,48 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   return _pedidosFechaAsc ? da.compareTo(db) : db.compareTo(da);
                 });
                 
-                if (_pedidosEstado != null) {
+                if (_pedidosEstado != null && _pedidosEstado != 'todos') {
                   docs = docs.where((d) => ((d.data() as Map<String, dynamic>)['estado'] ?? '').toString() == _pedidosEstado).toList();
                 }
-                
+
                 if (_pedidosUserFilter.isNotEmpty) {
-                  docs = docs.where((d) {
-                    final data = d.data() as Map<String, dynamic>;
-                    final uid = (data['userId'] ?? '').toString().toLowerCase();
-                    final email = (data['userEmail'] ?? '').toString().toLowerCase();
-                    return uid.contains(_pedidosUserFilter) || email.contains(_pedidosUserFilter);
-                  }).toList();
+                  final ids = docs
+                      .map((d) => ((d.data() as Map<String, dynamic>)['userId'] ?? '').toString())
+                      .where((id) => id.isNotEmpty)
+                      .toSet();
+                  return FutureBuilder<Map<String, Map<String, dynamic>>>(
+                    future: _fetchUsuariosPorIds(ids),
+                    builder: (context, userSnap) {
+                      if (userSnap.connectionState == ConnectionState.waiting) {
+                        return Center(child: CircularProgressIndicator(color: _colorRojo));
+                      }
+                      final usuariosMap = userSnap.data ?? {};
+                      final filtro = _pedidosUserFilter.toLowerCase();
+                      final filtrados = docs.where((d) {
+                        final data = d.data() as Map<String, dynamic>;
+                        final uid = (data['userId'] ?? '').toString().toLowerCase();
+                        final emailPedido = (data['userEmail'] ?? '').toString().toLowerCase();
+                        final user = usuariosMap[uid];
+                        final nombre = ((user?['nombre'] ?? '') as String).toLowerCase();
+                        final apellidos = ((user?['apellidos'] ?? '') as String).toLowerCase();
+                        final emailUsuario = ((user?['email'] ?? '') as String).toLowerCase();
+                        final dni = ((user?['dni'] ?? '') as String).toLowerCase();
+                        final nombreCompleto = ('$nombre $apellidos').trim();
+                        return uid.contains(filtro) ||
+                            emailPedido.contains(filtro) ||
+                            emailUsuario.contains(filtro) ||
+                            dni.contains(filtro) ||
+                            nombre.contains(filtro) ||
+                            apellidos.contains(filtro) ||
+                            nombreCompleto.contains(filtro);
+                      }).toList();
+
+                      return _buildTablaPedidos(filtrados, usuariosMap);
+                    },
+                  );
                 }
-                
-                return SingleChildScrollView(
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: _colorBlanco,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: DataTable(
-                      columnSpacing: 20,
-                      columns: [
-                        DataColumn(label: Text('Usuario', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-                        DataColumn(label: Text('Total', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-                        DataColumn(label: Text('Estado', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-                        DataColumn(label: Text('Fecha', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-                        DataColumn(label: Text('Acciones', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-                      ],
-                      rows: docs.map((doc) {
-                        final data = doc.data() as Map<String, dynamic>;
-                        final estado = (data['estado'] ?? '').toString();
-                        final fecha = data['fecha'];
-                        final dt = fecha is Timestamp ? fecha.toDate() : null;
-                        final fechaTxt = dt != null 
-                            ? '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}'
-                            : '';
-                        
-                        return DataRow(
-                          cells: [
-                            DataCell(
-                              FutureBuilder<DocumentSnapshot>(
-                                future: FirebaseFirestore.instance.collection('Usuarios').doc((data['userId'] ?? '').toString()).get(),
-                                builder: (context, snap) {
-                                  if (snap.connectionState == ConnectionState.waiting) {
-                                    return SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: _colorRojo));
-                                  }
-                                  final userData = snap.data?.data() as Map<String, dynamic>?;
-                                  final name = userData?['nombre']?.toString();
-                                  final apellidos = userData?['apellidos']?.toString();
-                                  final email = (data['userEmail'] ?? '').toString();
-                                  final userId = (data['userId'] ?? '').toString();
-                                  
-                                  final displayName = name?.isNotEmpty == true && apellidos?.isNotEmpty == true 
-                                      ? '$name $apellidos'
-                                      : (email.isNotEmpty ? email : userId);
-                                  
-                                  return SelectableText(
-                                    displayName,
-                                    style: TextStyle(color: _colorNegro),
-                                  );
-                                },
-                              ),
-                            ),
-                            DataCell(SelectableText(
-                              'S/ ${(data['total'] ?? 0).toStringAsFixed(2)}',
-                              style: TextStyle(color: _colorNegro),
-                            )),
-                            DataCell(
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                decoration: BoxDecoration(
-                                  color: estado == 'entregado' ? Colors.green : _colorCrema,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Text(
-                                  estado,
-                                  style: TextStyle(
-                                    color: estado == 'entregado' ? _colorBlanco : _colorNegro,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ),
-                            DataCell(SelectableText(
-                              fechaTxt,
-                              style: TextStyle(color: _colorNegro),
-                            )),
-                            DataCell(
-                              estado != 'entregado'
-                                  ? ElevatedButton(
-                                      onPressed: () => _marcarPedidoEntregado(doc.id),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: _colorRojo,
-                                        foregroundColor: _colorBlanco,
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(8),
-                                        ),
-                                      ),
-                                      child: const Text('Marcar Entregado'),
-                                    )
-                                  : Text('Entregado', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                            ),
-                          ],
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                );
+
+                return _buildTablaPedidos(docs, {});
               },
             ),
           ),
@@ -997,6 +968,142 @@ class _AdminDashboardState extends State<AdminDashboard> {
       ),
     );
   }
+
+  Widget _buildTablaPedidos(List<QueryDocumentSnapshot> docs, Map<String, Map<String, dynamic>> usuariosMap) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SingleChildScrollView(
+        child: Container(
+          decoration: BoxDecoration(
+            color: _colorBlanco,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: DataTable(
+            columnSpacing: 20,
+            columns: [
+              DataColumn(label: Text('Usuario', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+              DataColumn(label: Text('Total', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+              DataColumn(label: Text('Estado', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+              DataColumn(label: Text('Mesa', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+              DataColumn(label: Text('Fecha', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+              DataColumn(label: Text('Acciones', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+            ],
+            rows: docs.map((doc) {
+              final data = doc.data() as Map<String, dynamic>;
+              final estado = (data['estado'] ?? '').toString();
+              final fecha = data['fecha'];
+              final dt = fecha is Timestamp ? fecha.toDate() : null;
+              final fechaTxt = dt != null 
+                  ? '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}'
+                  : '';
+              final uid = (data['userId'] ?? '').toString();
+              final reservaId = (data['reserva_id'] ?? '').toString();
+              final mesaInline = (data['mesa'] ?? data['mesa_nombre'] ?? data['mesa_numero'] ?? '').toString();
+
+              Widget usuarioWidget;
+              if (usuariosMap.containsKey(uid)) {
+                final user = usuariosMap[uid];
+                final name = (user?['nombre'] ?? '').toString();
+                final apellidos = (user?['apellidos'] ?? '').toString();
+                final email = (data['userEmail'] ?? '').toString();
+                final displayName = (name.isNotEmpty || apellidos.isNotEmpty)
+                    ? ('$name $apellidos').trim()
+                    : (email.isNotEmpty ? email : uid);
+                usuarioWidget = SelectableText(displayName, style: TextStyle(color: _colorNegro));
+              } else {
+                usuarioWidget = FutureBuilder<DocumentSnapshot>(
+                  future: FirebaseFirestore.instance.collection('Usuarios').doc(uid).get(),
+                  builder: (context, snap) {
+                    if (snap.connectionState == ConnectionState.waiting) {
+                      return SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: _colorRojo, strokeWidth: 2));
+                    }
+                    final userData = snap.data?.data() as Map<String, dynamic>?;
+                    final name = (userData?['nombre'] ?? '').toString();
+                    final apellidos = (userData?['apellidos'] ?? '').toString();
+                    final email = (data['userEmail'] ?? '').toString();
+                    final displayName = (name.isNotEmpty || apellidos.isNotEmpty)
+                        ? ('$name $apellidos').trim()
+                        : (email.isNotEmpty ? email : uid);
+                    return SelectableText(displayName, style: TextStyle(color: _colorNegro));
+                  },
+                );
+              }
+
+              Widget mesaWidget;
+              if (mesaInline.isNotEmpty) {
+                mesaWidget = SelectableText(mesaInline, style: TextStyle(color: _colorNegro));
+              } else if (reservaId.isNotEmpty) {
+                mesaWidget = FutureBuilder<DocumentSnapshot>(
+                  future: FirebaseFirestore.instance.collection('Reservas').doc(reservaId).get(),
+                  builder: (context, rsnap) {
+                    if (rsnap.connectionState == ConnectionState.waiting) {
+                      return SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: _colorRojo, strokeWidth: 2));
+                    }
+                    final rdata = rsnap.data?.data() as Map<String, dynamic>?;
+                    final mesa = (rdata?['mesa_nombre'] ?? rdata?['mesa_id'] ?? '').toString();
+                    return SelectableText(mesa.isNotEmpty ? mesa : '-', style: TextStyle(color: _colorNegro));
+                  },
+                );
+              } else {
+                mesaWidget = SelectableText('-', style: TextStyle(color: _colorNegro));
+              }
+
+              return DataRow(
+                cells: [
+                  DataCell(usuarioWidget),
+                  DataCell(SelectableText('S/ ${(data['total'] ?? 0).toStringAsFixed(2)}', style: TextStyle(color: _colorNegro))),
+                  DataCell(
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: _badgeBgColor(estado),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        estado,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: _badgeTextColor(estado),
+                          fontWeight: FontWeight.bold,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ),
+                  DataCell(mesaWidget),
+                  DataCell(SelectableText(fechaTxt, style: TextStyle(color: _colorNegro))),
+                  DataCell(
+                    (estado != 'entregado' && estado != 'cancelado')
+                        ? ElevatedButton(
+                            onPressed: () => _marcarPedidoEntregado(doc.id),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _colorRojo,
+                              foregroundColor: _colorBlanco,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                            ),
+                            child: const Text('Entregado', style: TextStyle(fontSize: 12)),
+                          )
+                        : Text(
+                            estado == 'entregado' ? 'Entregado' : 'Cancelado',
+                            style: TextStyle(
+                              color: estado == 'entregado' ? Colors.green : Colors.red,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12,
+                            ),
+                          ),
+                  ),
+                ],
+              );
+            }).toList(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  
 
   Widget _buildReservas() {
     return Padding(
@@ -1013,7 +1120,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
           const SizedBox(height: 16),
           
-          // Filtros
           Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -1042,7 +1148,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                               final DateTime? picked = await showDatePicker(
                                 context: context,
                                 initialDate: _filterDate ?? DateTime.now(),
-                                firstDate: DateTime.now(),
+                                firstDate: DateTime(2000, 1, 1),
                                 lastDate: DateTime.now().add(const Duration(days: 365)),
                               );
                               if (picked != null) {
@@ -1285,7 +1391,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
           const SizedBox(height: 16),
           
-          // Formulario de locales
           Card(
             elevation: 4,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -1463,7 +1568,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
           const SizedBox(height: 24),
           
-          // Locales en tiempo real
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance.collection('Locales').snapshots(),
@@ -1494,74 +1598,70 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Widget _buildListaLocales(List<QueryDocumentSnapshot> locales) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.vertical,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: DataTable(
-          columnSpacing: 20,
-          columns: [
-            DataColumn(label: Text('Nombre', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-            DataColumn(label: Text('Dirección', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-            DataColumn(label: Text('Teléfono', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-            DataColumn(label: Text('Horario', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-            DataColumn(label: Text('Latitud', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-            DataColumn(label: Text('Longitud', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-            DataColumn(label: Text('Acciones', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
-          ],
-          rows: locales.map((doc) {
-            final data = doc.data() as Map<String, dynamic>;
-            final ubic = data['ubicacion'];
-            final latStr = (ubic is Map) ? (ubic['lat']?.toString() ?? '') : '';
-            final lngStr = (ubic is Map) ? (ubic['lng']?.toString() ?? '') : '';
-            
-            return DataRow(
-              cells: [
-                DataCell(SelectableText(
-                  (data['nombre'] ?? '').toString(),
-                  style: TextStyle(color: _colorNegro),
-                )),
-                DataCell(SelectableText(
-                  (data['direccion'] ?? '').toString(),
-                  style: TextStyle(color: _colorNegro),
-                )),
-                DataCell(SelectableText(
-                  (data['telefono'] ?? '').toString(),
-                  style: TextStyle(color: _colorNegro),
-                )),
-                DataCell(SelectableText(
-                  (data['horario'] ?? '').toString(),
-                  style: TextStyle(color: _colorNegro),
-                )),
-                DataCell(SelectableText(
-                  latStr,
-                  style: TextStyle(color: _colorNegro),
-                )),
-                DataCell(SelectableText(
-                  lngStr,
-                  style: TextStyle(color: _colorNegro),
-                )),
-                DataCell(
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: Icon(Icons.edit, color: Colors.blue),
-                        onPressed: () => _editarLocal(data, doc.id),
-                        tooltip: 'Editar',
-                      ),
-                      IconButton(
-                        icon: Icon(Icons.delete, color: _colorRojo),
-                        onPressed: () => _eliminarLocal(doc.id),
-                        tooltip: 'Eliminar',
-                      ),
-                    ],
-                  ),
+    return ListView.builder(
+      itemCount: locales.length,
+      itemBuilder: (context, index) {
+        final doc = locales[index];
+        final data = doc.data() as Map<String, dynamic>;
+        return Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      (data['nombre'] ?? '').toString(),
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _colorNegro),
+                    ),
+                    Row(
+                      children: [
+                        ElevatedButton(
+                          onPressed: () => _editarLocal(data, doc.id),
+                          style: ElevatedButton.styleFrom(backgroundColor: _colorRojo, foregroundColor: _colorBlanco),
+                          child: const Text('Editar'),
+                        ),
+                        const SizedBox(width: 8),
+                        OutlinedButton(
+                          onPressed: () => _eliminarLocal(doc.id),
+                          style: OutlinedButton.styleFrom(foregroundColor: _colorRojo, side: BorderSide(color: _colorRojo)),
+                          child: const Text('Eliminar'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(Icons.location_on, size: 18, color: _colorRojo),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text((data['direccion'] ?? '').toString(), style: TextStyle(color: _colorNegro)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(Icons.phone, size: 18, color: _colorRojo),
+                    const SizedBox(width: 6),
+                    Text((data['telefono'] ?? '').toString(), style: TextStyle(color: _colorNegro)),
+                    const SizedBox(width: 16),
+                    Icon(Icons.schedule, size: 18, color: _colorRojo),
+                    const SizedBox(width: 6),
+                    Text((data['horario'] ?? '').toString(), style: TextStyle(color: _colorNegro)),
+                  ],
                 ),
               ],
-            );
-          }).toList(),
-        ),
-      ),
+            ),
+          ),
+        );
+      },
     );
   }
 

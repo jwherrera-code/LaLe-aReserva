@@ -1,5 +1,6 @@
 import 'dart:ui';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_core/firebase_core.dart';
@@ -109,6 +110,8 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
     }
   }
 
+  
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
@@ -167,9 +170,27 @@ class _MainAppState extends State<MainApp> with WidgetsBindingObserver {
 class _WebAdminGate extends StatelessWidget {
   const _WebAdminGate();
 
-  bool _isAdmin(User? user) {
-    final email = user?.email?.toLowerCase();
-    return email == 'admin@lalena.com';
+  Future<bool> _isAdmin(User? user) async {
+    if (user == null) return false;
+    
+    try {
+      final userDoc = await FirebaseFirestore.instance
+          .collection('Usuarios')
+          .doc(user.uid)
+          .get();
+      
+      if (userDoc.exists) {
+        final userData = userDoc.data();
+        return userData?['rol'] == 'admin';
+      }
+      
+      final email = user.email?.toLowerCase();
+      return email == 'admin@lalena.com';
+    } catch (e) {
+      debugPrint('Error verificando rol admin: $e');
+      final email = user.email?.toLowerCase();
+      return email == 'admin@lalena.com';
+    }
   }
 
   @override
@@ -189,31 +210,42 @@ class _WebAdminGate extends StatelessWidget {
           return LoginScreen(onLoginSuccess: () {});
         }
 
-        if (!_isAdmin(user)) {
-          return Scaffold(
-            appBar: AppBar(title: const Text('Acceso restringido')),
-            body: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    'Esta página es solo para administradores.',
-                    textAlign: TextAlign.center,
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () async {
-                      await FirebaseAuth.instance.signOut();
-                    },
-                    child: const Text('Cerrar sesión'),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }
+        return FutureBuilder<bool>(
+          future: _isAdmin(user),
+          builder: (context, adminSnapshot) {
+            if (adminSnapshot.connectionState == ConnectionState.waiting) {
+              return const Scaffold(
+                body: Center(child: CircularProgressIndicator()),
+              );
+            }
 
-        return const AdminDashboard();
+            if (!adminSnapshot.hasData || !adminSnapshot.data!) {
+              return Scaffold(
+                appBar: AppBar(title: const Text('Acceso restringido')),
+                body: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Esta página es solo para administradores.',
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: () async {
+                          await FirebaseAuth.instance.signOut();
+                        },
+                        child: const Text('Cerrar sesión'),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            return const AdminDashboard();
+          },
+        );
       },
     );
   }

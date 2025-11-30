@@ -3,10 +3,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'login_screen.dart';
-import 'home_screen.dart';
-import 'perfil_screen.dart';
 import 'firebase_reconnection_mixin.dart';
 
 class MenuScreen extends StatefulWidget {
@@ -494,123 +490,9 @@ class _MenuScreenState extends State<MenuScreen>
     widget.onNavigateToCart();
   }
 
-  void _cerrarSesion() async {
-    final stateContext = context;
-    showDialog(
-      context: stateContext,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Cerrar Sesión'),
-          content: const Text('¿Estás seguro de que quieres cerrar sesión?'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancelar'),
-            ),
-          TextButton(
-            onPressed: () async {
-                Navigator.of(stateContext).pop();
+  
 
-                showDialog(
-                  context: stateContext,
-                  barrierDismissible: false,
-                  builder: (context) => const Center(
-                    child: CircularProgressIndicator(
-                      color: Color.fromARGB(255, 230, 38, 23),
-                    ),
-                  ),
-                );
-
-                try {
-                  await FirebaseAuth.instance.signOut();
-
-                  try {
-                    final prefs = await SharedPreferences.getInstance();
-                    final remember = prefs.getBool('remember_me') ?? false;
-                    if (!remember) {
-                      await prefs.remove('saved_email');
-                      await prefs.remove('saved_password');
-                    }
-                  } catch (_) {}
-
-                  if (mounted && stateContext.mounted) {
-                    Navigator.of(stateContext).pop();
-                  }
-
-                  if (!mounted || !stateContext.mounted) return;
-                  Navigator.of(stateContext).pushAndRemoveUntil(
-                    MaterialPageRoute(
-                      builder: (context) => LoginScreen(
-                        onLoginSuccess: () {
-                          Navigator.of(context).pushAndRemoveUntil(
-                            MaterialPageRoute(
-                              builder: (context) => const HomeScreen(),
-                            ),
-                            (route) => false,
-                          );
-                        },
-                      ),
-                    ),
-                    (route) => false,
-                  );
-                } catch (e) {
-                  if (mounted && stateContext.mounted) {
-                    Navigator.of(stateContext).pop();
-                  }
-                  if (mounted) {
-                    _mostrarSnackBar('Error al cerrar sesión: $e', Colors.red);
-                  }
-                }
-              },
-              child: const Text(
-                'Cerrar Sesión',
-                style: TextStyle(color: Colors.red),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  void _mostrarMenuUsuario() {
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.person),
-              title: const Text('Mi Perfil'),
-              onTap: () {
-                Navigator.pop(context); // Cerrar el bottom sheet
-                Navigator.of(context)
-                    .push(
-                      MaterialPageRoute(
-                        builder: (context) => const PerfilScreen(),
-                      ),
-                    )
-                    .then((_) => _cargarInformacionUsuario());
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.logout, color: Colors.red),
-              title: const Text(
-                'Cerrar Sesión',
-                style: TextStyle(color: Colors.red),
-              ),
-              onTap: () {
-                Navigator.pop(context);
-                _cerrarSesion();
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  
 
   Future<void> _onRefresh() async {
     await obtenerProductos();
