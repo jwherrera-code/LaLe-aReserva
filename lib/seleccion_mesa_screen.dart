@@ -173,7 +173,8 @@ class _SeleccionMesaScreenState extends State<SeleccionMesaScreen> {
                         ),
                       ),
                     );
-                    if (mounted && widget.returnToCaller && reservaId != null) {
+                    if (widget.returnToCaller && reservaId != null) {
+                      if (!context.mounted) return;
                       Navigator.pop(context, reservaId);
                     }
                   },

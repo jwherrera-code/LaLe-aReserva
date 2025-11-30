@@ -67,7 +67,7 @@ class _MenuScreenState extends State<MenuScreen>
       if (productos.isEmpty) {
         obtenerProductos();
       }
-      WidgetsBinding.instance.addPostFrameCallback((__) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
         _obtenerProductosPopulares();
       });
     });
@@ -134,22 +134,22 @@ class _MenuScreenState extends State<MenuScreen>
           'Usuario encontrado en colección "Usuarios": ${userData?['nombre']}',
         );
         if (mounted) {
-          setState(() {
-            _nombreUsuario = userData?['nombre'] ?? 'Usuario';
-            _fotoBase64 = userData?['fotoBase64'] as String?;
-            _avatarAssetPath = userData?['avatarAssetPath'] as String?;
-            _cargandoUsuario = false;
-          });
+            setState(() {
+              _nombreUsuario = userData?['nombre'] ?? 'Usuario';
+              _fotoBase64 = userData?['fotoBase64'] as String?;
+              _avatarAssetPath = userData?['avatarAssetPath'] as String?;
+              _cargandoUsuario = false;
+            });
         }
       } else {
         debugPrint('Usuario no encontrado en la colección "Usuarios"');
         if (mounted) {
-          setState(() {
-            _nombreUsuario = 'Usuario';
-            _fotoBase64 = null;
-            _avatarAssetPath = null;
-            _cargandoUsuario = false;
-          });
+            setState(() {
+              _nombreUsuario = 'Usuario';
+              _fotoBase64 = null;
+              _avatarAssetPath = null;
+              _cargandoUsuario = false;
+            });
         }
       }
     } catch (e) {
@@ -632,21 +632,17 @@ class _MenuScreenState extends State<MenuScreen>
         title: Row(
           mainAxisAlignment: MainAxisAlignment.start,
           children: [
-            IconButton(
-              icon: (_fotoBase64 != null)
-                  ? CircleAvatar(
-                      radius: 20,
-                      backgroundImage: MemoryImage(base64Decode(_fotoBase64!)),
-                    )
-                  : (_avatarAssetPath != null
-                      ? CircleAvatar(
-                          radius: 20,
-                          backgroundImage: AssetImage(_avatarAssetPath!),
-                        )
-                      : const Icon(Icons.person, size: 28)),
-              onPressed: _mostrarMenuUsuario,
-              tooltip: 'Menú de usuario',
-            ),
+            (_fotoBase64 != null)
+                ? CircleAvatar(
+                    radius: 18,
+                    backgroundImage: MemoryImage(base64Decode(_fotoBase64!)),
+                  )
+                : (_avatarAssetPath != null
+                    ? CircleAvatar(
+                        radius: 18,
+                        backgroundImage: AssetImage(_avatarAssetPath!),
+                      )
+                    : const Icon(Icons.person, size: 28, color: Colors.white)),
             const SizedBox(width: 8),
             if (!_cargandoUsuario && _nombreUsuario.isNotEmpty)
               Expanded(

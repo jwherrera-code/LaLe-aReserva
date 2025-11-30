@@ -9,6 +9,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'widgets/custom_app_bar.dart';
 import 'login_screen.dart';
+import 'perfil_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   final int initialIndex;
@@ -97,6 +98,8 @@ class _HomeScreenState extends State<HomeScreen> {
         } else {
           return _buildUsuarioNoAutenticado();
         }
+      case 4:
+        return const PerfilScreen();
       default:
         return MenuScreen(
           carrito: _carrito,
@@ -308,6 +311,10 @@ class _HomeScreenState extends State<HomeScreen> {
             BottomNavigationBarItem(
               icon: Icon(Icons.table_restaurant),
               label: "Reservas",
+            ),
+            BottomNavigationBarItem(
+              icon: Icon(Icons.person),
+              label: "Perfil",
             ),
           ],
         ),

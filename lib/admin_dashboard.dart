@@ -1,6 +1,6 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_admin_scaffold/admin_scaffold.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -12,6 +12,7 @@ class AdminDashboard extends StatefulWidget {
 class _AdminDashboardState extends State<AdminDashboard> {
   String _selectedRoute = '/productos';
 
+  // Controladores para productos
   final TextEditingController _prodNombreController = TextEditingController();
   final TextEditingController _prodPrecioController = TextEditingController();
   final TextEditingController _prodDescripcionController = TextEditingController();
@@ -19,7 +20,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
   final TextEditingController _prodCategoriaController = TextEditingController();
   bool _prodDisponibilidad = true;
   String? _prodEditingId;
+  String _prodOrdenDisponibilidad = 'Todos';
+  final List<String> _categorias = const [
+    'Originales', 'Piqueos', 'Clásicos', 'Parrillas', 'Guarniciones',
+    'Bebidas', 'Postres', 'Picaditos', 'Ensaladas', 'Salsas', 'Sin Categoría'
+  ];
 
+  // Controladores para locales
   final TextEditingController _locNombreController = TextEditingController();
   final TextEditingController _locDireccionController = TextEditingController();
   final TextEditingController _locTelefonoController = TextEditingController();
@@ -28,27 +35,107 @@ class _AdminDashboardState extends State<AdminDashboard> {
   final TextEditingController _locLngController = TextEditingController();
   String? _locEditingId;
 
+  // Filtros para reservas
+  DateTime? _filterDate;
+  String? _filterHour;
+
+  // Filtros para pedidos
+  String? _pedidosEstado;
+  String _pedidosUserFilter = '';
+  bool _pedidosFechaAsc = true;
+
+  // Estados locales
+  List<QueryDocumentSnapshot> _productosDocs = [];
+
+  // Colores de la aplicación
+  final Color _colorNegro = const Color(0xFF0E0502);
+  final Color _colorBlanco = const Color(0xFFFAFAFA);
+  final Color _colorCrema = const Color(0xFFFAE8C9);
+  final Color _colorRojo = const Color(0xFFE62617);
+
+  @override
+  void initState() {
+    super.initState();
+    _cargarProductos();
+  }
+
+  @override
+  void dispose() {
+    // Limpiar todos los controladores
+    _prodNombreController.dispose();
+    _prodPrecioController.dispose();
+    _prodDescripcionController.dispose();
+    _prodImagenController.dispose();
+    _prodCategoriaController.dispose();
+    _locNombreController.dispose();
+    _locDireccionController.dispose();
+    _locTelefonoController.dispose();
+    _locHorarioController.dispose();
+    _locLatController.dispose();
+    _locLngController.dispose();
+    super.dispose();
+  }
+
+  // CORRECCIÓN: Métodos para cargar datos de Firebase usando StreamBuilder
+  Future<void> _cargarProductos() async {
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('Menu')
+          .get();
+
+      if (mounted) {
+        setState(() {
+          _productosDocs = snapshot.docs;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error cargando productos: $e');
+      if (mounted) {
+        setState(() {});
+      }
+    }
+  }
+
   void _guardarProducto() async {
     final nombre = _prodNombreController.text.trim();
     final precio = double.tryParse(_prodPrecioController.text) ?? 0.0;
     final descripcion = _prodDescripcionController.text.trim();
     final imagen = _prodImagenController.text.trim();
     final categoria = _prodCategoriaController.text.trim();
-    if (nombre.isEmpty) return;
-    final ref = FirebaseFirestore.instance.collection('Menu');
-    final data = {
-      'nombre': nombre,
-      'precio': precio,
-      'descripcion': descripcion,
-      'imagen': imagen,
-      'categoria': categoria,
-      'disponibilidad': _prodDisponibilidad,
-    };
-    if (_prodEditingId == null) {
-      await ref.add(data);
-    } else {
-      await ref.doc(_prodEditingId).update(data);
+    
+    if (nombre.isEmpty || precio <= 0 || categoria.isEmpty) {
+      _mostrarSnackBar('Por favor complete todos los campos requeridos');
+      return;
     }
+
+    try {
+      final ref = FirebaseFirestore.instance.collection('Menu');
+      final data = {
+        'nombre': nombre,
+        'precio': precio,
+        'descripcion': descripcion,
+        'imagen': imagen,
+        'categoria': categoria,
+        'disponibilidad': _prodDisponibilidad,
+        'fechaActualizacion': FieldValue.serverTimestamp(),
+      };
+      
+      if (_prodEditingId == null) {
+        await ref.add(data);
+        _mostrarSnackBar('Producto agregado exitosamente');
+      } else {
+        await ref.doc(_prodEditingId).update(data);
+        _mostrarSnackBar('Producto actualizado exitosamente');
+      }
+      
+      _limpiarFormularioProducto();
+      await _cargarProductos(); // Recargar datos después de guardar
+    } catch (e) {
+      _mostrarSnackBar('Error al guardar el producto: $e');
+    }
+  }
+
+  void _limpiarFormularioProducto() {
     _prodNombreController.clear();
     _prodPrecioController.clear();
     _prodDescripcionController.clear();
@@ -71,8 +158,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Future<void> _eliminarProducto(String id) async {
-    await FirebaseFirestore.instance.collection('Menu').doc(id).delete();
-    setState(() {});
+    final confirm = await _mostrarDialogoConfirmacion('¿Está seguro de eliminar este producto?');
+    if (confirm == true) {
+      try {
+        await FirebaseFirestore.instance.collection('Menu').doc(id).delete();
+        _mostrarSnackBar('Producto eliminado exitosamente');
+        await _cargarProductos(); // Recargar datos después de eliminar
+      } catch (e) {
+        _mostrarSnackBar('Error al eliminar el producto: $e');
+      }
+    }
   }
 
   void _guardarLocal() async {
@@ -82,20 +177,39 @@ class _AdminDashboardState extends State<AdminDashboard> {
     final horario = _locHorarioController.text.trim();
     final lat = double.tryParse(_locLatController.text.trim());
     final lng = double.tryParse(_locLngController.text.trim());
-    if (nombre.isEmpty) return;
-    final ref = FirebaseFirestore.instance.collection('Locales');
-    final data = {
-      'nombre': nombre,
-      'direccion': direccion,
-      'telefono': telefono,
-      'horario': horario,
-      'ubicacion': (lat != null && lng != null) ? {'lat': lat, 'lng': lng} : null,
-    };
-    if (_locEditingId == null) {
-      await ref.add(data);
-    } else {
-      await ref.doc(_locEditingId).update(data);
+    
+    if (nombre.isEmpty || direccion.isEmpty) {
+      _mostrarSnackBar('Nombre y dirección son campos requeridos');
+      return;
     }
+
+    try {
+      final ref = FirebaseFirestore.instance.collection('Locales');
+      final data = {
+        'nombre': nombre,
+        'direccion': direccion,
+        'telefono': telefono,
+        'horario': horario,
+        'ubicacion': (lat != null && lng != null) ? {'lat': lat, 'lng': lng} : null,
+        'fechaActualizacion': FieldValue.serverTimestamp(),
+      };
+      
+      if (_locEditingId == null) {
+        await ref.add(data);
+        _mostrarSnackBar('Local agregado exitosamente');
+      } else {
+        await ref.doc(_locEditingId).update(data);
+        _mostrarSnackBar('Local actualizado exitosamente');
+      }
+      
+      _limpiarFormularioLocal();
+      // StreamBuilder recargará automáticamente los datos
+    } catch (e) {
+      _mostrarSnackBar('Error al guardar el local: $e');
+    }
+  }
+
+  void _limpiarFormularioLocal() {
     _locNombreController.clear();
     _locDireccionController.clear();
     _locTelefonoController.clear();
@@ -124,23 +238,115 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Future<void> _eliminarLocal(String id) async {
-    await FirebaseFirestore.instance.collection('Locales').doc(id).delete();
-    setState(() {});
+    final confirm = await _mostrarDialogoConfirmacion('¿Está seguro de eliminar este local?');
+    if (confirm == true) {
+      try {
+        await FirebaseFirestore.instance.collection('Locales').doc(id).delete();
+        _mostrarSnackBar('Local eliminado exitosamente');
+        // StreamBuilder recargará automáticamente los datos
+      } catch (e) {
+        _mostrarSnackBar('Error al eliminar el local: $e');
+      }
+    }
   }
 
   Future<void> _marcarPedidoEntregado(String id) async {
-    await FirebaseFirestore.instance.collection('Pedidos').doc(id).update({'estado': 'entregado', 'cancelable': false});
-    setState(() {});
+    final confirm = await _mostrarDialogoConfirmacion('¿Marcar este pedido como entregado?');
+    if (confirm == true) {
+      try {
+        await FirebaseFirestore.instance.collection('Pedidos').doc(id).update({
+          'estado': 'entregado', 
+          'cancelable': false,
+          'fechaEntrega': FieldValue.serverTimestamp(),
+        });
+        _mostrarSnackBar('Pedido marcado como entregado');
+        setState(() {});
+      } catch (e) {
+        _mostrarSnackBar('Error al actualizar el pedido: $e');
+      }
+    }
   }
 
   Future<void> _actualizarReserva(String id, Map<String, dynamic> data) async {
-    await FirebaseFirestore.instance.collection('Reservas').doc(id).update(data);
-    setState(() {});
+    try {
+      await FirebaseFirestore.instance.collection('Reservas').doc(id).update(data);
+      _mostrarSnackBar('Reserva actualizada exitosamente');
+      setState(() {});
+    } catch (e) {
+      _mostrarSnackBar('Error al actualizar la reserva: $e');
+    }
   }
 
   Future<void> _eliminarReserva(String id) async {
-    await FirebaseFirestore.instance.collection('Reservas').doc(id).delete();
-    setState(() {});
+    final confirm = await _mostrarDialogoConfirmacion('¿Está seguro de eliminar esta reserva?');
+    if (confirm == true) {
+      try {
+        await FirebaseFirestore.instance.collection('Reservas').doc(id).delete();
+        _mostrarSnackBar('Reserva eliminada exitosamente');
+        setState(() {});
+      } catch (e) {
+        _mostrarSnackBar('Error al eliminar la reserva: $e');
+      }
+    }
+  }
+
+  void _mostrarSnackBar(String mensaje) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(mensaje),
+        backgroundColor: _colorRojo,
+      ),
+    );
+  }
+
+  Future<bool?> _mostrarDialogoConfirmacion(String mensaje) async {
+    return showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirmar'),
+        content: Text(mensaje),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _colorRojo,
+              foregroundColor: _colorBlanco,
+            ),
+            child: const Text('Aceptar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Aplicar orden de disponibilidad a una lista de productos
+  List<QueryDocumentSnapshot> _aplicarOrdenDisponibilidad(List<QueryDocumentSnapshot> productos) {
+    productos = List<QueryDocumentSnapshot>.from(productos);
+    
+    // Aplicar filtro de disponibilidad
+    if (_prodOrdenDisponibilidad == 'Disponibles primero') {
+      productos.sort((a, b) {
+        final dataA = a.data() as Map<String, dynamic>;
+        final dataB = b.data() as Map<String, dynamic>;
+        final ad = (dataA['disponibilidad'] ?? true) == true ? 0 : 1;
+        final bd = (dataB['disponibilidad'] ?? true) == true ? 0 : 1;
+        return ad.compareTo(bd);
+      });
+    } else if (_prodOrdenDisponibilidad == 'No disponibles primero') {
+      productos.sort((a, b) {
+        final dataA = a.data() as Map<String, dynamic>;
+        final dataB = b.data() as Map<String, dynamic>;
+        final ad = (dataA['disponibilidad'] ?? true) == true ? 1 : 0;
+        final bd = (dataB['disponibilidad'] ?? true) == true ? 1 : 0;
+        return ad.compareTo(bd);
+      });
+    }
+    
+    return productos;
   }
 
   Widget _buildProductos() {
@@ -148,79 +354,640 @@ class _AdminDashboardState extends State<AdminDashboard> {
       padding: const EdgeInsets.all(24),
       child: Column(
         children: [
-          Row(children: [
-            Expanded(child: TextField(controller: _prodNombreController, decoration: const InputDecoration(labelText: 'Nombre'))),
-            const SizedBox(width: 16),
-            Expanded(child: TextField(controller: _prodPrecioController, decoration: const InputDecoration(labelText: 'Precio'), keyboardType: TextInputType.number)),
-            const SizedBox(width: 16),
-            Expanded(child: TextField(controller: _prodCategoriaController, decoration: const InputDecoration(labelText: 'Categoría'))),
-          ]),
-          const SizedBox(height: 12),
-          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Expanded(child: TextField(controller: _prodDescripcionController, decoration: const InputDecoration(labelText: 'Descripción'))),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _prodImagenController,
-                    decoration: const InputDecoration(labelText: 'URL Imagen'),
-                    onChanged: (_) => setState(() {}),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Gestión de Productos',
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                  color: _colorNegro,
+                ),
+              ),
+              ElevatedButton.icon(
+                onPressed: _limpiarFormularioProducto,
+                icon: const Icon(Icons.add),
+                label: const Text('Nuevo Producto'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _colorRojo,
+                  foregroundColor: _colorBlanco,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  const SizedBox(height: 8),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 24),
+          
+          // Filtros y ordenamiento
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Text(
+                    'Ordenar por disponibilidad:',
+                    style: TextStyle(fontWeight: FontWeight.w600, color: _colorNegro),
+                  ),
+                  const SizedBox(width: 12),
                   Container(
-                    height: 120,
                     decoration: BoxDecoration(
-                      color: Colors.black,
+                      color: _colorCrema,
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: (_prodImagenController.text.trim().isNotEmpty)
-                          ? Image.network(_prodImagenController.text.trim(), fit: BoxFit.cover, errorBuilder: (c, e, s) => const Center(child: Icon(Icons.broken_image, color: Colors.white)))
-                          : const Center(child: Icon(Icons.image, color: Colors.white)),
+                    child: DropdownButton<String>(
+                      value: _prodOrdenDisponibilidad,
+                      items: const [
+                        DropdownMenuItem(value: 'Todos', child: Text('Todos')),
+                        DropdownMenuItem(value: 'Disponibles primero', child: Text('Disponibles primero')),
+                        DropdownMenuItem(value: 'No disponibles primero', child: Text('No disponibles primero')),
+                      ],
+                      onChanged: (v) => setState(() => _prodOrdenDisponibilidad = v ?? 'Todos'),
+                      dropdownColor: _colorCrema,
+                      style: TextStyle(color: _colorNegro),
+                      underline: const SizedBox(),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    'Productos',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: _colorRojo,
+                      fontSize: 16,
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: 16),
-            Row(children: [
-              const Text('Disponible'),
-              Switch(value: _prodDisponibilidad, onChanged: (v) => setState(() => _prodDisponibilidad = v)),
-            ]),
-            const SizedBox(width: 16),
-            ElevatedButton(onPressed: _guardarProducto, child: Text(_prodEditingId == null ? 'Agregar' : 'Actualizar')),
-          ]),
+          ),
+          
+          const SizedBox(height: 12),
+          
+          // Formulario de productos
+          Card(
+            elevation: 4,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _prodNombreController,
+                          decoration: InputDecoration(
+                            labelText: 'Nombre *',
+                            filled: true,
+                            fillColor: _colorCrema,
+                            labelStyle: TextStyle(color: _colorNegro),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: _colorRojo, width: 2),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: TextField(
+                          controller: _prodPrecioController,
+                          keyboardType: TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(
+                            labelText: 'Precio *',
+                            filled: true,
+                            fillColor: _colorCrema,
+                            labelStyle: TextStyle(color: _colorNegro),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: _colorRojo, width: 2),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: _colorCrema,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: DropdownButtonFormField<String>(
+                            initialValue: _prodCategoriaController.text.isNotEmpty ? _prodCategoriaController.text : null,
+                            items: _categorias.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                            onChanged: (v) => setState(() => _prodCategoriaController.text = v ?? ''),
+                            decoration: InputDecoration(
+                              labelText: 'Categoría *',
+                              filled: true,
+                              fillColor: Colors.transparent,
+                              labelStyle: TextStyle(color: _colorNegro),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide.none,
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide(color: _colorRojo, width: 2),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _prodDescripcionController,
+                          maxLines: 3,
+                          decoration: InputDecoration(
+                            labelText: 'Descripción',
+                            filled: true,
+                            fillColor: _colorCrema,
+                            labelStyle: TextStyle(color: _colorNegro),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: _colorRojo, width: 2),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: Column(
+                          children: [
+                            TextField(
+                              controller: _prodImagenController,
+                              decoration: InputDecoration(
+                                labelText: 'URL Imagen',
+                                filled: true,
+                                fillColor: _colorCrema,
+                                labelStyle: TextStyle(color: _colorNegro),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide.none,
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide(color: _colorRojo, width: 2),
+                                ),
+                              ),
+                              onChanged: (_) => setState(() {}),
+                            ),
+                            const SizedBox(height: 8),
+                            Container(
+                              height: 120,
+                              decoration: BoxDecoration(
+                                color: _colorCrema,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: _colorRojo.withValues(alpha: 0.3)),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: (_prodImagenController.text.trim().isNotEmpty)
+                                    ? Image.network(
+                                        _prodImagenController.text.trim(),
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (c, e, s) => Center(
+                                          child: Icon(Icons.broken_image, color: _colorRojo, size: 40),
+                                        ),
+                                        loadingBuilder: (context, child, loadingProgress) {
+                                          if (loadingProgress == null) return child;
+                                          return Center(
+                                            child: CircularProgressIndicator(
+                                              value: loadingProgress.expectedTotalBytes != null
+                                                  ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
+                                                  : null,
+                                              color: _colorRojo,
+                                            ),
+                                          );
+                                        },
+                                      )
+                                    : Center(
+                                        child: Icon(Icons.image, color: _colorRojo, size: 40),
+                                      ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Column(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: _colorCrema,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text('Disponible', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro)),
+                                Switch(
+                                  value: _prodDisponibilidad,
+                                  onChanged: (v) => setState(() => _prodDisponibilidad = v),
+                                  activeThumbColor: _colorRojo,
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Row(
+                            children: [
+                              ElevatedButton(
+                                onPressed: _prodEditingId == null ? _guardarProducto : null,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _colorRojo,
+                                  foregroundColor: _colorBlanco,
+                                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                child: const Text('Añadir'),
+                              ),
+                              const SizedBox(width: 8),
+                              ElevatedButton(
+                                onPressed: _prodEditingId != null ? _guardarProducto : null,
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: _colorNegro,
+                                  foregroundColor: _colorBlanco,
+                                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                child: const Text('Actualizar'),
+                              ),
+                              const SizedBox(width: 8),
+                              OutlinedButton(
+                                onPressed: _limpiarFormularioProducto,
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: _colorRojo,
+                                  side: BorderSide(color: _colorRojo),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                child: const Text('Cancelar'),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
           const SizedBox(height: 24),
+          
+          // Productos en tiempo real
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance.collection('Menu').snapshots(),
               builder: (context, snapshot) {
-                if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-                final docs = snapshot.data!.docs;
-                return SingleChildScrollView(
-                  child: DataTable(
-                    columns: const [
-                      DataColumn(label: Text('Nombre')),
-                      DataColumn(label: Text('Precio')),
-                      DataColumn(label: Text('Categoría')),
-                      DataColumn(label: Text('Disponible')),
-                      DataColumn(label: Text('Acciones')),
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(child: CircularProgressIndicator(color: _colorRojo));
+                }
+                final docs = snapshot.data?.docs ?? const [];
+                final productosFiltrados = _aplicarOrdenDisponibilidad(docs);
+                if (productosFiltrados.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.restaurant_menu, size: 64, color: _colorRojo),
+                        const SizedBox(height: 16),
+                        Text('No hay productos registrados', style: TextStyle(fontSize: 18, color: _colorNegro)),
+                      ],
+                    ),
+                  );
+                }
+                return _buildListaProductos(productosFiltrados);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildListaProductos(List<QueryDocumentSnapshot> productos) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.vertical,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: DataTable(
+          columnSpacing: 20,
+          columns: [
+            DataColumn(label: Text('Nombre', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+            DataColumn(label: Text('Precio', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+            DataColumn(label: Text('Categoría', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+            DataColumn(label: Text('Disponible', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+            DataColumn(label: Text('Acciones', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+          ],
+          rows: productos.map((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            return DataRow(
+              cells: [
+                DataCell(SelectableText(
+                  (data['nombre'] ?? '').toString(),
+                  style: TextStyle(color: _colorNegro),
+                )),
+                DataCell(SelectableText(
+                  'S/ ${(data['precio'] ?? 0).toStringAsFixed(2)}',
+                  style: TextStyle(color: _colorNegro),
+                )),
+                DataCell(SelectableText(
+                  (data['categoria'] ?? '').toString(),
+                  style: TextStyle(color: _colorNegro),
+                )),
+                DataCell(
+                  Icon(
+                    (data['disponibilidad'] ?? true) ? Icons.check_circle : Icons.cancel,
+                    color: (data['disponibilidad'] ?? true) ? Colors.green : _colorRojo,
+                  ),
+                ),
+                DataCell(
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.edit, color: Colors.blue),
+                        onPressed: () => _editarProducto(data, doc.id),
+                        tooltip: 'Editar',
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.delete, color: _colorRojo),
+                        onPressed: () => _eliminarProducto(doc.id),
+                        tooltip: 'Eliminar',
+                      ),
                     ],
-                    rows: docs.map((doc) {
-                      final data = doc.data() as Map<String, dynamic>;
-                      return DataRow(cells: [
-                        DataCell(Text((data['nombre'] ?? '').toString())),
-                        DataCell(Text('S/ ${(data['precio'] ?? 0).toString()}')),
-                        DataCell(Text((data['categoria'] ?? '').toString())),
-                        DataCell(Text(((data['disponibilidad'] ?? true) ? 'Sí' : 'No'))),
-                        DataCell(Row(children: [
-                          IconButton(icon: const Icon(Icons.edit, color: Colors.blue), onPressed: () => _editarProducto(data, doc.id)),
-                          IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _eliminarProducto(doc.id)),
-                        ])),
-                      ]);
-                    }).toList(),
+                  ),
+                ),
+              ],
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPedidos() {
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        children: [
+          Text(
+            'Gestión de Pedidos',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: _colorNegro,
+            ),
+          ),
+          const SizedBox(height: 16),
+          
+          // Filtros
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Estado:', style: TextStyle(color: _colorNegro, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: _colorCrema,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: DropdownButton<String>(
+                          value: _pedidosEstado,
+                          hint: Text('Todos', style: TextStyle(color: _colorNegro)),
+                          items: const [
+                            DropdownMenuItem(value: 'pendiente', child: Text('Pendiente')),
+                            DropdownMenuItem(value: 'entregado', child: Text('Entregado')),
+                            DropdownMenuItem(value: 'cancelado', child: Text('Cancelado')),
+                          ],
+                          onChanged: (v) => setState(() => _pedidosEstado = v),
+                          dropdownColor: _colorCrema,
+                          style: TextStyle(color: _colorNegro),
+                          underline: const SizedBox(),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 24),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Usuario:', style: TextStyle(color: _colorNegro, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 8),
+                        TextField(
+                          decoration: InputDecoration(
+                            hintText: 'Nombre/Email/UID',
+                            filled: true,
+                            fillColor: _colorCrema,
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: BorderSide(color: _colorRojo, width: 2),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                          ),
+                          onChanged: (v) => setState(() => _pedidosUserFilter = v.trim().toLowerCase()),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 24),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Fecha:', style: TextStyle(color: _colorNegro, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: _colorCrema,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: DropdownButton<bool>(
+                          value: _pedidosFechaAsc,
+                          items: const [
+                            DropdownMenuItem(value: true, child: Text('Ascendente')),
+                            DropdownMenuItem(value: false, child: Text('Descendente')),
+                          ],
+                          onChanged: (v) => setState(() => _pedidosFechaAsc = v ?? true),
+                          dropdownColor: _colorCrema,
+                          style: TextStyle(color: _colorNegro),
+                          underline: const SizedBox(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance.collection('Pedidos').orderBy('fecha', descending: true).snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(child: CircularProgressIndicator(color: _colorRojo));
+                }
+                if (snapshot.hasError) {
+                  return Center(child: Text('Error: ${snapshot.error}', style: TextStyle(color: _colorNegro)));
+                }
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return Center(child: Text('No hay pedidos registrados', style: TextStyle(color: _colorNegro)));
+                }
+
+                var docs = snapshot.data!.docs.toList();
+                docs.sort((a, b) {
+                  final ta = (a.data() as Map<String, dynamic>)['fecha'];
+                  final tb = (b.data() as Map<String, dynamic>)['fecha'];
+                  final da = ta is Timestamp ? ta.toDate() : DateTime.fromMillisecondsSinceEpoch(0);
+                  final db = tb is Timestamp ? tb.toDate() : DateTime.fromMillisecondsSinceEpoch(0);
+                  return _pedidosFechaAsc ? da.compareTo(db) : db.compareTo(da);
+                });
+                
+                if (_pedidosEstado != null) {
+                  docs = docs.where((d) => ((d.data() as Map<String, dynamic>)['estado'] ?? '').toString() == _pedidosEstado).toList();
+                }
+                
+                if (_pedidosUserFilter.isNotEmpty) {
+                  docs = docs.where((d) {
+                    final data = d.data() as Map<String, dynamic>;
+                    final uid = (data['userId'] ?? '').toString().toLowerCase();
+                    final email = (data['userEmail'] ?? '').toString().toLowerCase();
+                    return uid.contains(_pedidosUserFilter) || email.contains(_pedidosUserFilter);
+                  }).toList();
+                }
+                
+                return SingleChildScrollView(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: _colorBlanco,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: DataTable(
+                      columnSpacing: 20,
+                      columns: [
+                        DataColumn(label: Text('Usuario', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+                        DataColumn(label: Text('Total', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+                        DataColumn(label: Text('Estado', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+                        DataColumn(label: Text('Fecha', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+                        DataColumn(label: Text('Acciones', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+                      ],
+                      rows: docs.map((doc) {
+                        final data = doc.data() as Map<String, dynamic>;
+                        final estado = (data['estado'] ?? '').toString();
+                        final fecha = data['fecha'];
+                        final dt = fecha is Timestamp ? fecha.toDate() : null;
+                        final fechaTxt = dt != null 
+                            ? '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}'
+                            : '';
+                        
+                        return DataRow(
+                          cells: [
+                            DataCell(
+                              FutureBuilder<DocumentSnapshot>(
+                                future: FirebaseFirestore.instance.collection('Usuarios').doc((data['userId'] ?? '').toString()).get(),
+                                builder: (context, snap) {
+                                  if (snap.connectionState == ConnectionState.waiting) {
+                                    return SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: _colorRojo));
+                                  }
+                                  final userData = snap.data?.data() as Map<String, dynamic>?;
+                                  final name = userData?['nombre']?.toString();
+                                  final apellidos = userData?['apellidos']?.toString();
+                                  final email = (data['userEmail'] ?? '').toString();
+                                  final userId = (data['userId'] ?? '').toString();
+                                  
+                                  final displayName = name?.isNotEmpty == true && apellidos?.isNotEmpty == true 
+                                      ? '$name $apellidos'
+                                      : (email.isNotEmpty ? email : userId);
+                                  
+                                  return SelectableText(
+                                    displayName,
+                                    style: TextStyle(color: _colorNegro),
+                                  );
+                                },
+                              ),
+                            ),
+                            DataCell(SelectableText(
+                              'S/ ${(data['total'] ?? 0).toStringAsFixed(2)}',
+                              style: TextStyle(color: _colorNegro),
+                            )),
+                            DataCell(
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: estado == 'entregado' ? Colors.green : _colorCrema,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  estado,
+                                  style: TextStyle(
+                                    color: estado == 'entregado' ? _colorBlanco : _colorNegro,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            DataCell(SelectableText(
+                              fechaTxt,
+                              style: TextStyle(color: _colorNegro),
+                            )),
+                            DataCell(
+                              estado != 'entregado'
+                                  ? ElevatedButton(
+                                      onPressed: () => _marcarPedidoEntregado(doc.id),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: _colorRojo,
+                                        foregroundColor: _colorBlanco,
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                      ),
+                                      child: const Text('Marcar Entregado'),
+                                    )
+                                  : Text('Entregado', style: TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        );
+                      }).toList(),
+                    ),
                   ),
                 );
               },
@@ -231,216 +998,612 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  Widget _buildPedidos() {
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('Pedidos').snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final docs = snapshot.data!.docs;
-          return SingleChildScrollView(
-            child: DataTable(
-              columns: const [
-                DataColumn(label: Text('Usuario')),
-                DataColumn(label: Text('Total')),
-                DataColumn(label: Text('Estado')),
-                DataColumn(label: Text('Acciones')),
-              ],
-              rows: docs.map((doc) {
-                final data = doc.data() as Map<String, dynamic>;
-                return DataRow(cells: [
-                  DataCell(FutureBuilder<DocumentSnapshot>(
-                    future: FirebaseFirestore.instance.collection('Usuarios').doc((data['userId'] ?? '').toString()).get(),
-                    builder: (context, snap) {
-                      final name = (snap.data?.data() as Map<String, dynamic>?)?['nombre']?.toString();
-                      final email = (data['userEmail'] ?? '').toString();
-                      final userId = (data['userId'] ?? '').toString();
-                      return Text(name?.isNotEmpty == true ? name! : (email.isNotEmpty ? email : userId));
-                    },
-                  )),
-                  DataCell(Text('S/ ${(data['total'] ?? 0).toString()}')),
-                  DataCell(Text((data['estado'] ?? '').toString())),
-                  DataCell(Row(children: [
-                    ElevatedButton(onPressed: () => _marcarPedidoEntregado(doc.id), child: const Text('Entregado')),
-                  ])),
-                ]);
-              }).toList(),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  DateTime? _filterDate;
-  String? _filterHour;
-
   Widget _buildReservas() {
     return Padding(
       padding: const EdgeInsets.all(24),
-      child: Column(children: [
-        Row(children: [
-          Expanded(
-            child: InputDatePickerFormField(
-              firstDate: DateTime(2020),
-              lastDate: DateTime(2100),
-              fieldLabelText: 'Filtrar por fecha',
-              onDateSubmitted: (d) => setState(() => _filterDate = d),
-              onDateSaved: (d) => setState(() => _filterDate = d),
+      child: Column(
+        children: [
+          Text(
+            'Gestión de Reservas',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: _colorNegro,
             ),
           ),
-          const SizedBox(width: 16),
-          DropdownButton<String>(
-            value: _filterHour,
-            hint: const Text('Hora'),
-            items: List.generate(11, (i) => 12 + i)
-                .map((h) => DropdownMenuItem(value: '${h.toString().padLeft(2, '0')}:00', child: Text('${h.toString().padLeft(2, '0')}:00')))
-                .toList(),
-            onChanged: (v) => setState(() => _filterHour = v),
+          const SizedBox(height: 16),
+          
+          // Filtros
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Filtrar por fecha:', style: TextStyle(color: _colorNegro, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 8),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: _colorCrema,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: ListTile(
+                            leading: Icon(Icons.calendar_today, color: _colorRojo),
+                            title: Text(
+                              _filterDate != null 
+                                  ? '${_filterDate!.day}/${_filterDate!.month}/${_filterDate!.year}'
+                                  : 'Seleccionar fecha',
+                              style: TextStyle(color: _colorNegro),
+                            ),
+                            onTap: () async {
+                              final DateTime? picked = await showDatePicker(
+                                context: context,
+                                initialDate: _filterDate ?? DateTime.now(),
+                                firstDate: DateTime.now(),
+                                lastDate: DateTime.now().add(const Duration(days: 365)),
+                              );
+                              if (picked != null) {
+                                setState(() => _filterDate = picked);
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Filtrar por hora:', style: TextStyle(color: _colorNegro, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 8),
+                        Container(
+                          decoration: BoxDecoration(
+                            color: _colorCrema,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: DropdownButtonFormField<String>(
+                            initialValue: _filterHour,
+                            decoration: InputDecoration(
+                              border: InputBorder.none,
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                            ),
+                            items: List.generate(11, (i) => 12 + i)
+                                .map((h) => DropdownMenuItem(
+                                      value: '${h.toString().padLeft(2, '0')}:00',
+                                      child: Text('${h.toString().padLeft(2, '0')}:00'),
+                                    ))
+                                .toList(),
+                            onChanged: (v) => setState(() => _filterHour = v),
+                            dropdownColor: _colorCrema,
+                            style: TextStyle(color: _colorNegro),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  ElevatedButton(
+                    onPressed: () => setState(() {
+                      _filterDate = null;
+                      _filterHour = null;
+                    }),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _colorRojo,
+                      foregroundColor: _colorBlanco,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: const Text('Limpiar Filtros'),
+                  ),
+                ],
+              ),
+            ),
           ),
-        ]),
-        const SizedBox(height: 16),
-        Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('Reservas').snapshots(),
-            builder: (context, snapshot) {
-              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-              final docs = snapshot.data!.docs;
-              return SingleChildScrollView(
-                child: DataTable(
-                  columns: const [
-                    DataColumn(label: Text('Cliente')),
-                    DataColumn(label: Text('Mesa')),
-                    DataColumn(label: Text('Fecha/Hora')),
-                    DataColumn(label: Text('Personas')),
-                    DataColumn(label: Text('Acciones')),
-                  ],
-                  rows: docs.where((doc) {
-                    final data = doc.data() as Map<String, dynamic>;
-                    final ts = data['fecha_hora'];
-                    final dt = ts is Timestamp ? ts.toDate() : null;
-                    final matchesDate = _filterDate == null || (dt != null && dt.year == _filterDate!.year && dt.month == _filterDate!.month && dt.day == _filterDate!.day);
-                    final matchesHour = _filterHour == null || (dt != null && '${dt.hour.toString().padLeft(2, '0')}:00' == _filterHour);
-                    return matchesDate && matchesHour;
-                  }).map((doc) {
+          const SizedBox(height: 16),
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance.collection('Reservas').orderBy('fecha_hora', descending: true).snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(child: CircularProgressIndicator(color: _colorRojo));
+                }
+                if (snapshot.hasError) {
+                  return Center(child: Text('Error: ${snapshot.error}', style: TextStyle(color: _colorNegro)));
+                }
+                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return Center(child: Text('No hay reservas registradas', style: TextStyle(color: _colorNegro)));
+                }
+
+                final docs = snapshot.data!.docs;
+                final filtered = docs.where((doc) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  final ts = data['fecha_hora'];
+                  final dt = ts is Timestamp ? ts.toDate() : null;
+                  final matchesDate = _filterDate == null || (dt != null && 
+                      dt.year == _filterDate!.year && 
+                      dt.month == _filterDate!.month && 
+                      dt.day == _filterDate!.day);
+                  final matchesHour = _filterHour == null || (dt != null && 
+                      '${dt.hour.toString().padLeft(2, '0')}:00' == _filterHour);
+                  return matchesDate && matchesHour;
+                }).toList();
+
+                if (filtered.isEmpty) {
+                  return Center(child: Text('No hay reservas que coincidan con los filtros', style: TextStyle(color: _colorNegro)));
+                }
+
+                return ListView.builder(
+                  itemCount: filtered.length,
+                  itemBuilder: (context, index) {
+                    final doc = filtered[index];
                     final data = doc.data() as Map<String, dynamic>;
                     final cant = (data['cantidad_personas'] ?? 0).toString();
                     final nombre = (data['nombre_cliente'] ?? '').toString();
                     final mesa = (data['mesa_nombre'] ?? '').toString();
                     final ts = data['fecha_hora'];
-                    final fechaTexto = ts is Timestamp ? ts.toDate().toString() : ts?.toString() ?? '';
-                    return DataRow(cells: [
-                      DataCell(Text(nombre)),
-                      DataCell(Text(mesa)),
-                      DataCell(Text(fechaTexto)),
-                      DataCell(Text(cant)),
-                      DataCell(Row(children: [
-                        IconButton(icon: const Icon(Icons.edit, color: Colors.blue), onPressed: () async {
-                          final controller = TextEditingController(text: cant);
-                          final result = await showDialog<String>(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              title: const Text('Editar personas'),
-                              content: TextField(controller: controller, keyboardType: TextInputType.number),
-                              actions: [
-                                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-                                TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text('Guardar')),
+                    final dt = ts is Timestamp ? ts.toDate() : null;
+                    final fechaTexto = dt != null
+                        ? '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}'
+                        : (ts?.toString() ?? '');
+
+                    return Card(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(
+                                  nombre.isNotEmpty ? nombre : 'Sin nombre',
+                                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: _colorNegro),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: _colorRojo,
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Text(
+                                    'Mesa: $mesa', 
+                                    style: TextStyle(color: _colorBlanco, fontWeight: FontWeight.bold)
+                                  ),
+                                ),
                               ],
                             ),
-                          );
-                          if (result != null) {
-                            final n = int.tryParse(result) ?? int.parse(cant);
-                            await _actualizarReserva(doc.id, {'cantidad_personas': n});
-                          }
-                        }),
-                        IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _eliminarReserva(doc.id)),
-                      ])),
-                    ]);
-                  }).toList(),
-                ),
-              );
-            },
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                Icon(Icons.access_time, size: 18, color: _colorRojo),
+                                const SizedBox(width: 6),
+                                Text(fechaTexto, style: TextStyle(fontWeight: FontWeight.w500, color: _colorNegro)),
+                                const SizedBox(width: 16),
+                                Icon(Icons.people, size: 18, color: _colorRojo),
+                                const SizedBox(width: 6),
+                                Text('$cant personas', style: TextStyle(fontWeight: FontWeight.w500, color: _colorNegro)),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              children: [
+                                ElevatedButton.icon(
+                                  onPressed: () async {
+                                    final controller = TextEditingController(text: cant);
+                                    final result = await showDialog<String>(
+                                      context: context,
+                                      builder: (ctx) => AlertDialog(
+                                        title: Text('Editar cantidad de personas', style: TextStyle(color: _colorNegro)),
+                                        content: TextField(
+                                          controller: controller,
+                                          keyboardType: TextInputType.number,
+                                          decoration: InputDecoration(
+                                            labelText: 'Cantidad de personas',
+                                            border: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(8),
+                                            ),
+                                            focusedBorder: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(8),
+                                              borderSide: BorderSide(color: _colorRojo, width: 2),
+                                            ),
+                                          ),
+                                        ),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () => Navigator.pop(ctx),
+                                            child: Text('Cancelar', style: TextStyle(color: _colorNegro)),
+                                          ),
+                                          ElevatedButton(
+                                            onPressed: () => Navigator.pop(ctx, controller.text),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: _colorRojo,
+                                              foregroundColor: _colorBlanco,
+                                            ),
+                                            child: const Text('Guardar'),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    if (result != null) {
+                                      final n = int.tryParse(result) ?? int.parse(cant);
+                                      await _actualizarReserva(doc.id, {'cantidad_personas': n});
+                                    }
+                                  },
+                                  icon: const Icon(Icons.edit),
+                                  label: const Text('Editar Personas'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: _colorRojo,
+                                    foregroundColor: _colorBlanco,
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                OutlinedButton.icon(
+                                  onPressed: () => _eliminarReserva(doc.id),
+                                  icon: const Icon(Icons.delete),
+                                  label: const Text('Eliminar'),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: _colorRojo,
+                                    side: BorderSide(color: _colorRojo),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
           ),
-        ),
-      ]),
+        ],
+      ),
     );
   }
 
   Widget _buildLocales() {
     return Padding(
       padding: const EdgeInsets.all(24),
-      child: Column(children: [
-        Row(children: [
-          Expanded(child: TextField(controller: _locNombreController, decoration: const InputDecoration(labelText: 'Nombre'))),
-          const SizedBox(width: 16),
-          Expanded(child: TextField(controller: _locDireccionController, decoration: const InputDecoration(labelText: 'Dirección'))),
-          const SizedBox(width: 16),
-          Expanded(child: TextField(controller: _locTelefonoController, decoration: const InputDecoration(labelText: 'Teléfono'))),
-          const SizedBox(width: 16),
-          Expanded(child: TextField(controller: _locHorarioController, decoration: const InputDecoration(labelText: 'Horario'))),
-          const SizedBox(width: 16),
-          Expanded(child: TextField(controller: _locLatController, decoration: const InputDecoration(labelText: 'Latitud'), keyboardType: TextInputType.number)),
-          const SizedBox(width: 16),
-          Expanded(child: TextField(controller: _locLngController, decoration: const InputDecoration(labelText: 'Longitud'), keyboardType: TextInputType.number)),
-          const SizedBox(width: 16),
-          ElevatedButton(onPressed: _guardarLocal, child: Text(_locEditingId == null ? 'Agregar' : 'Actualizar')),
-        ]),
-        const SizedBox(height: 24),
-        Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('Locales').snapshots(),
-            builder: (context, snapshot) {
-              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-              final docs = snapshot.data!.docs;
-              return SingleChildScrollView(
-                child: DataTable(
-                  columns: const [
-                    DataColumn(label: Text('Nombre')),
-                    DataColumn(label: Text('Dirección')),
-                    DataColumn(label: Text('Teléfono')),
-                    DataColumn(label: Text('Horario')),
-                    DataColumn(label: Text('Lat')),
-                    DataColumn(label: Text('Lng')),
-                    DataColumn(label: Text('Acciones')),
-                  ],
-                  rows: docs.map((doc) {
-                    final data = doc.data() as Map<String, dynamic>;
-                    final ubic = data['ubicacion'];
-                    final latStr = (ubic is Map) ? (ubic['lat']?.toString() ?? '') : '';
-                    final lngStr = (ubic is Map) ? (ubic['lng']?.toString() ?? '') : '';
-                    return DataRow(cells: [
-                      DataCell(Text((data['nombre'] ?? '').toString())),
-                      DataCell(Text((data['direccion'] ?? '').toString())),
-                      DataCell(Text((data['telefono'] ?? '').toString())),
-                      DataCell(Text((data['horario'] ?? '').toString())),
-                      DataCell(Text(latStr)),
-                      DataCell(Text(lngStr)),
-                      DataCell(Row(children: [
-                        IconButton(icon: const Icon(Icons.edit, color: Colors.blue), onPressed: () => _editarLocal(data, doc.id)),
-                        IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _eliminarLocal(doc.id)),
-                      ])),
-                    ]);
-                  }).toList(),
-                ),
-              );
-            },
+      child: Column(
+        children: [
+          Text(
+            'Gestión de Locales',
+            style: TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+              color: _colorNegro,
+            ),
           ),
+          const SizedBox(height: 16),
+          
+          // Formulario de locales
+          Card(
+            elevation: 4,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _locNombreController,
+                          decoration: InputDecoration(
+                            labelText: 'Nombre *',
+                            filled: true,
+                            fillColor: _colorCrema,
+                            labelStyle: TextStyle(color: _colorNegro),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: _colorRojo, width: 2),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: TextField(
+                          controller: _locDireccionController,
+                          decoration: InputDecoration(
+                            labelText: 'Dirección *',
+                            filled: true,
+                            fillColor: _colorCrema,
+                            labelStyle: TextStyle(color: _colorNegro),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: _colorRojo, width: 2),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _locTelefonoController,
+                          decoration: InputDecoration(
+                            labelText: 'Teléfono',
+                            filled: true,
+                            fillColor: _colorCrema,
+                            labelStyle: TextStyle(color: _colorNegro),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: _colorRojo, width: 2),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: TextField(
+                          controller: _locHorarioController,
+                          decoration: InputDecoration(
+                            labelText: 'Horario',
+                            filled: true,
+                            fillColor: _colorCrema,
+                            labelStyle: TextStyle(color: _colorNegro),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: _colorRojo, width: 2),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _locLatController,
+                          keyboardType: TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(
+                            labelText: 'Latitud',
+                            filled: true,
+                            fillColor: _colorCrema,
+                            labelStyle: TextStyle(color: _colorNegro),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: _colorRojo, width: 2),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: TextField(
+                          controller: _locLngController,
+                          keyboardType: TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(
+                            labelText: 'Longitud',
+                            filled: true,
+                            fillColor: _colorCrema,
+                            labelStyle: TextStyle(color: _colorNegro),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide(color: _colorRojo, width: 2),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Column(
+                        children: [
+                          ElevatedButton(
+                            onPressed: _guardarLocal,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _colorRojo,
+                              foregroundColor: _colorBlanco,
+                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                            child: Text(_locEditingId == null ? 'Agregar Local' : 'Actualizar Local'),
+                          ),
+                          if (_locEditingId != null) ...[
+                            const SizedBox(height: 8),
+                            OutlinedButton(
+                              onPressed: _limpiarFormularioLocal,
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: _colorRojo,
+                                side: BorderSide(color: _colorRojo),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: const Text('Cancelar'),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          
+          // Locales en tiempo real
+          Expanded(
+            child: StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance.collection('Locales').snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(child: CircularProgressIndicator(color: _colorRojo));
+                }
+                final docs = snapshot.data?.docs ?? const [];
+                if (docs.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.store, size: 64, color: _colorRojo),
+                        const SizedBox(height: 16),
+                        Text('No hay locales registrados', style: TextStyle(fontSize: 18, color: _colorNegro)),
+                      ],
+                    ),
+                  );
+                }
+                return _buildListaLocales(docs);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildListaLocales(List<QueryDocumentSnapshot> locales) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.vertical,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: DataTable(
+          columnSpacing: 20,
+          columns: [
+            DataColumn(label: Text('Nombre', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+            DataColumn(label: Text('Dirección', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+            DataColumn(label: Text('Teléfono', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+            DataColumn(label: Text('Horario', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+            DataColumn(label: Text('Latitud', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+            DataColumn(label: Text('Longitud', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+            DataColumn(label: Text('Acciones', style: TextStyle(fontWeight: FontWeight.bold, color: _colorNegro))),
+          ],
+          rows: locales.map((doc) {
+            final data = doc.data() as Map<String, dynamic>;
+            final ubic = data['ubicacion'];
+            final latStr = (ubic is Map) ? (ubic['lat']?.toString() ?? '') : '';
+            final lngStr = (ubic is Map) ? (ubic['lng']?.toString() ?? '') : '';
+            
+            return DataRow(
+              cells: [
+                DataCell(SelectableText(
+                  (data['nombre'] ?? '').toString(),
+                  style: TextStyle(color: _colorNegro),
+                )),
+                DataCell(SelectableText(
+                  (data['direccion'] ?? '').toString(),
+                  style: TextStyle(color: _colorNegro),
+                )),
+                DataCell(SelectableText(
+                  (data['telefono'] ?? '').toString(),
+                  style: TextStyle(color: _colorNegro),
+                )),
+                DataCell(SelectableText(
+                  (data['horario'] ?? '').toString(),
+                  style: TextStyle(color: _colorNegro),
+                )),
+                DataCell(SelectableText(
+                  latStr,
+                  style: TextStyle(color: _colorNegro),
+                )),
+                DataCell(SelectableText(
+                  lngStr,
+                  style: TextStyle(color: _colorNegro),
+                )),
+                DataCell(
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: Icon(Icons.edit, color: Colors.blue),
+                        onPressed: () => _editarLocal(data, doc.id),
+                        tooltip: 'Editar',
+                      ),
+                      IconButton(
+                        icon: Icon(Icons.delete, color: _colorRojo),
+                        onPressed: () => _eliminarLocal(doc.id),
+                        tooltip: 'Eliminar',
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          }).toList(),
         ),
-      ]),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return AdminScaffold(
-      appBar: AppBar(title: const Text('Panel de Administración'), backgroundColor: const Color(0xFF0E0502), foregroundColor: const Color(0xFFFAFAFA)),
+      appBar: AppBar(
+        title: const Text('Panel de Administración'),
+        backgroundColor: _colorNegro,
+        foregroundColor: _colorBlanco,
+        elevation: 0,
+        centerTitle: true,
+      ),
       sideBar: SideBar(
+        key: ValueKey('sidebar-$_selectedRoute'),
+        backgroundColor: _colorCrema,
+        activeBackgroundColor: _colorRojo,
+        activeIconColor: _colorBlanco,
+        activeTextStyle: TextStyle(color: _colorBlanco, fontWeight: FontWeight.bold),
+        textStyle: TextStyle(color: _colorNegro, fontWeight: FontWeight.w500),
+        iconColor: _colorNegro,
         items: const [
-          AdminMenuItem(title: 'Productos', icon: Icons.restaurant, route: '/productos'),
-          AdminMenuItem(title: 'Pedidos', icon: Icons.list_alt, route: '/pedidos'),
-          AdminMenuItem(title: 'Reservas', icon: Icons.event, route: '/reservas'),
-          AdminMenuItem(title: 'Locales', icon: Icons.store, route: '/locales'),
+          AdminMenuItem(
+            title: 'Productos',
+            icon: Icons.restaurant,
+            route: '/productos',
+          ),
+          AdminMenuItem(
+            title: 'Pedidos',
+            icon: Icons.list_alt,
+            route: '/pedidos',
+          ),
+          AdminMenuItem(
+            title: 'Reservas',
+            icon: Icons.event,
+            route: '/reservas',
+          ),
+          AdminMenuItem(
+            title: 'Locales',
+            icon: Icons.store,
+            route: '/locales',
+          ),
         ],
         selectedRoute: _selectedRoute,
         onSelected: (item) {
@@ -448,20 +1611,23 @@ class _AdminDashboardState extends State<AdminDashboard> {
             _selectedRoute = item.route ?? '/productos';
           });
         },
+        
       ),
-      body: Builder(builder: (context) {
-        switch (_selectedRoute) {
-          case '/pedidos':
-            return _buildPedidos();
-          case '/reservas':
-            return _buildReservas();
-          case '/locales':
-            return _buildLocales();
-          case '/productos':
-          default:
-            return _buildProductos();
-        }
-      }),
+      body: Builder(
+        builder: (context) {
+          switch (_selectedRoute) {
+            case '/pedidos':
+              return _buildPedidos();
+            case '/reservas':
+              return _buildReservas();
+            case '/locales':
+              return _buildLocales();
+            case '/productos':
+            default:
+              return _buildProductos();
+          }
+        },
+      ),
     );
   }
 }

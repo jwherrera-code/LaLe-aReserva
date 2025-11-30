@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:image_picker/image_picker.dart';
+import 'login_screen.dart';
+import 'home_screen.dart';
 
 class PerfilScreen extends StatefulWidget {
   const PerfilScreen({super.key});
@@ -43,6 +45,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
   Future<void> _cargarDatosUsuario() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
         _errorMessage = 'Usuario no autenticado';
@@ -58,6 +61,8 @@ class _PerfilScreenState extends State<PerfilScreen> {
           .doc(user.uid)
           .get();
 
+      if (!mounted) return;
+
       if (userDoc.exists) {
         final userData = userDoc.data();
         debugPrint('Datos del usuario encontrados: $userData');
@@ -70,6 +75,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
         });
       } else {
         debugPrint('No se encontraron datos del usuario en Firestore');
+        if (!mounted) return;
         setState(() {
           _isLoading = false;
           _errorMessage = 'No se encontraron datos del usuario';
@@ -77,6 +83,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
       }
     } catch (e) {
       debugPrint('Error cargando datos del usuario: $e');
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
         _errorMessage = 'Error al cargar datos: $e';
@@ -127,6 +134,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
                               .update({
                                 'avatarAssetPath': null,
                               });
+                          if (!mounted) return;
                           setState(() {
                             _avatarAssetPath = null;
                           });
@@ -160,6 +168,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
                                     'avatarAssetPath': asset,
                                     'fotoBase64': null,
                                   });
+                              if (!mounted) return;
                               setState(() {
                                 _avatarAssetPath = asset;
                                 _fotoBase64 = null;
@@ -402,10 +411,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
         backgroundColor: const Color.fromARGB(255, 230, 38, 23),
         foregroundColor: Colors.white,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
+        automaticallyImplyLeading: false,
       ),
       body: _isLoading
           ? const Center(
@@ -547,6 +553,32 @@ class _PerfilScreenState extends State<PerfilScreen> {
                                 style: const TextStyle(
                                   fontSize: 16,
                                   color: Colors.grey,
+                                ),
+                              ),
+                              const SizedBox(height: 16),
+                              ElevatedButton.icon(
+                                onPressed: () async {
+                                  await FirebaseAuth.instance.signOut();
+                                  if (!context.mounted) return;
+                                  Navigator.of(context).pushAndRemoveUntil(
+                                    MaterialPageRoute(
+                                      builder: (context) => LoginScreen(
+                                        onLoginSuccess: () {
+                                          Navigator.of(context).pushAndRemoveUntil(
+                                            MaterialPageRoute(builder: (context) => const HomeScreen()),
+                                            (route) => false,
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                    (route) => false,
+                                  );
+                                },
+                                icon: const Icon(Icons.logout),
+                                label: const Text('Cerrar sesión'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color.fromARGB(255, 230, 38, 23),
+                                  foregroundColor: Colors.white,
                                 ),
                               ),
                             ],
